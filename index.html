@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aste Fantacalcio Classic (Cloudflare D1)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    [v-cloak] { display: none !important; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen antialiased selection:bg-indigo-500 selection:text-white">
+
+  <div id="app" v-cloak class="min-h-screen flex flex-col">
+
+    <!-- HEADER CONDIVISO -->
+    <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-30 shadow-md">
+      <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
+        
+        <div class="flex items-center space-x-3 cursor-pointer" @click="goHome">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center font-black text-xl shadow-lg shadow-indigo-500/20">
+            ⚡
+          </div>
+          <div>
+            <h1 class="text-lg font-bold leading-tight text-white">{{ currentScreen === 'auction' ? activeAuction.config.name : 'Gestione Aste' }}</h1>
+            
+            <!-- STATUS SINCRONIZZAZIONE -->
+            <div v-if="currentScreen === 'auction'" class="flex items-center gap-2 mt-0.5">
+              <span v-if="syncStatus === 'ok'" class="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> 🟢 Salvato su D1
+              </span>
+              <span v-if="syncStatus === 'syncing'" class="text-xs font-semibold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span> 🟡 Salvataggio...
+              </span>
+              <span v-if="syncStatus === 'error'" class="text-xs font-semibold px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center gap-1 cursor-pointer" @click="retrySync">
+                <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> 🔴 Errore (Clicca per riprovare)
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- QUICK METRICS BAR (Solo in Asta) -->
+        <div v-if="currentScreen === 'auction' && activeAuction" class="flex items-center gap-3 bg-slate-950/80 p-1.5 rounded-xl border border-slate-800 text-xs sm:text-sm">
+          <div class="px-3 py-1 rounded-lg bg-slate-900 border border-slate-800">
+            <span class="text-slate-400 block text-[10px] uppercase font-bold">Crediti</span>
+            <span class="font-bold text-emerald-400 text-base">{{ creditsRemaining }}</span>
+            <span class="text-slate-500 text-xs">/ {{ activeAuction.config.budget }}</span>
+          </div>
+          <div class="px-3 py-1 rounded-lg bg-slate-900 border border-slate-800">
+            <span class="text-slate-400 block text-[10px] uppercase font-bold">Rosa</span>
+            <span class="font-bold text-indigo-400 text-base">{{ purchasedCount }}</span>
+            <span class="text-slate-500 text-xs">/ {{ activeAuction.config.total_players }}</span>
+          </div>
+        </div>
+
+        <!-- MENU TABS (Solo in Asta) -->
+        <nav v-if="currentScreen === 'auction'" class="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 w-full md:w-auto">
+          <button v-for="tab in tabs" :key="tab.id" @click="currentTab = tab.id"
+                  :class="['px-3 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap',
+                           currentTab === tab.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60']">
+            <span>{{ tab.icon }}</span> <span>{{ tab.label }}</span>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- NOTIFICATION TOAST -->
+    <transition enter-active-class="transition duration-300 ease-out" enter-from-class="transform translate-y-2 opacity-0" enter-to-class="transform translate-y-0 opacity-100" leave-active-class="transition duration-200 ease-in" leave-from-class="opacity-100" leave-to-class="opacity-0">
+      <div v-if="notification.show" :class="['fixed bottom-5 right-5 z-50 px-4 py-3 rounded-xl shadow-2xl border text-sm font-bold flex items-center gap-2', notification.type === 'error' ? 'bg-rose-950 text-rose-200 border-rose-800' : 'bg-emerald-950 text-emerald-200 border-emerald-800']">
+        <span>{{ notification.message }}</span>
+      </div>
+    </transition>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
+
+      <!-- ================= SCHERMATA: GESTIONE ASTE (HOME) ================= -->
+      <section v-if="currentScreen === 'home'" class="space-y-6">
+        
+        <div v-if="legacyMigrationAvailable" class="bg-indigo-950/60 border border-indigo-500/50 p-4 rounded-xl flex items-center justify-between">
+          <div>
+            <h3 class="text-indigo-300 font-bold">Dati Vecchia Asta Rilevati</h3>
+            <p class="text-xs text-indigo-400">Abbiamo trovato un'asta salvata localmente nel browser. Vuoi salvarla su Cloudflare D1?</p>
+          </div>
+          <button @click="migrateLegacyData" class="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold text-xs hover:bg-indigo-500">Migra in D1</button>
+        </div>
+
+        <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+          <h2 class="text-2xl font-black text-white">Le Mie Aste</h2>
+          <button @click="showNewAuctionModal = true" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 font-bold rounded-xl text-sm transition shadow-lg shadow-indigo-600/30">
+            + NUOVA ASTA
+          </button>
+        </div>
+
+        <div v-if="loadingAuctions" class="text-center py-12 text-slate-400 animate-pulse">Caricamento aste da D1...</div>
+        
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div v-if="auctionsList.length === 0" class="col-span-full text-center py-12 bg-slate-900 border border-slate-800 rounded-2xl">
+            <p class="text-slate-400">Non hai ancora creato nessuna asta.</p>
+          </div>
+
+          <div v-for="auction in auctionsList" :key="auction.id" class="bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-4 shadow-lg hover:border-slate-700 transition">
+            <div class="flex justify-between items-start">
+              <h3 class="font-bold text-lg text-white">{{ auction.name }}</h3>
+              <span class="text-[10px] px-2 py-1 bg-slate-800 rounded font-bold uppercase">{{ auction.status }}</span>
+            </div>
+            <div class="text-xs text-slate-400 space-y-1">
+              <p>Budget Iniziale: <strong class="text-emerald-400">{{ auction.budget }}</strong> cr</p>
+              <p>Rosa: <strong class="text-indigo-400">{{ auction.total_players }}</strong> giocatori</p>
+              <p>Creata: {{ new Date(auction.created_at).toLocaleDateString() }}</p>
+            </div>
+            <div class="flex gap-2 pt-2 border-t border-slate-800">
+              <button @click="openAuction(auction.id)" class="flex-1 py-2 bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 font-bold rounded-xl text-xs transition">
+                APRI ASTA
+              </button>
+              <button @click="deleteAuction(auction.id)" class="px-3 py-2 bg-rose-900/20 text-rose-400 border border-rose-500/30 hover:bg-rose-900/40 font-bold rounded-xl text-xs transition">
+                🗑️
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- ================= SCHERMATA: ASTA LIVE ================= -->
+      <section v-else-if="currentScreen === 'auction' && activeAuction" class="space-y-6">
+
+        <!-- ===== TAB: ASTA LIVE ===== -->
+        <div v-if="currentTab === 'asta'" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          
+          <!-- LEFT COLUMN (Ruoli & Budget) -->
+          <div class="lg:col-span-4 space-y-4">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4">
+              <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                <span>Riepilogo Ruoli & Budget</span>
+                <span class="text-xs text-indigo-400 font-normal">Obiettivi</span>
+              </h2>
+
+              <div class="grid grid-cols-1 gap-2.5">
+                <div v-for="role in ['P', 'D', 'C', 'A']" :key="role" class="p-3 rounded-xl border bg-slate-950/60 transition" :class="roleCardBorder(role)">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <span :class="['w-7 h-7 rounded-lg font-black text-xs flex items-center justify-center text-white', roleBadgeBg(role)]">{{ role }}</span>
+                      <div>
+                        <span class="font-bold text-sm text-slate-200">{{ roleFullName(role) }}</span>
+                        <span class="text-xs text-slate-400 block">{{ rolePurchasedCount[role] }} / {{ activeAuction.config.role_targets[role] }} Acquistati</span>
+                      </div>
+                    </div>
+                    <div class="text-right">
+                      <div class="text-xs font-bold text-slate-300">{{ roleSpent[role] }} <span class="text-[10px] text-slate-500">/ {{ roleTheoreticalBudgets[role] }} cr</span></div>
+                      <div class="text-[11px] text-slate-400">Residuo: <span :class="roleTheoreticalRemaining[role] < 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'">{{ roleTheoreticalRemaining[role] }} cr</span></div>
+                    </div>
+                  </div>
+                  <div class="mt-2 w-full bg-slate-800 h-1.5 rounded-full overflow-hidden flex">
+                    <div class="h-full bg-indigo-500 transition-all duration-300" :style="{ width: Math.min(100, (rolePurchasedCount[role] / activeAuction.config.role_targets[role]) * 100) + '%' }"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- QUICK BUDGET BOX -->
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-2 text-xs">
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Spesa Totale Effettiva:</span><span class="font-bold text-white">{{ spentTotal }} cr</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Posti Ancora Liberi:</span><span class="font-bold text-indigo-400">{{ remainingCount }}</span>
+              </div>
+              <div class="flex justify-between py-1">
+                <span class="text-slate-400">Max Spendibile Ora:</span><span class="font-bold text-amber-400 text-sm">{{ maxSpendableNext }} cr</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT COLUMN (Ricerca & Acquisto) -->
+          <div class="lg:col-span-8 space-y-4">
+            
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <div class="flex flex-col sm:flex-row gap-3">
+                <div class="relative flex-1">
+                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">🔍</span>
+                  <input v-model="searchQuery" type="text" placeholder="Cerca calciatore o squadra..."
+                         class="w-full pl-9 pr-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm focus:outline-none focus:border-indigo-500 text-white placeholder-slate-500">
+                </div>
+                <select v-model="selectedTeamFilter" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-semibold text-slate-300 focus:outline-none focus:border-indigo-500">
+                  <option value="ALL">Tutte le Squadre</option>
+                  <option v-for="team in availableTeams" :key="team" :value="team">{{ team }}</option>
+                </select>
+              </div>
+              <div class="flex items-center gap-1.5 flex-wrap pt-1">
+                <button v-for="r in ['ALL', 'P', 'D', 'C', 'A']" :key="r" @click="selectedRoleFilter = r"
+                        :class="['px-3 py-1 rounded-lg text-xs font-bold transition', selectedRoleFilter === r ? 'bg-indigo-600 text-white' : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white']">
+                  {{ r === 'ALL' ? 'Tutti I Ruoli' : r }}
+                </button>
+              </div>
+            </div>
+
+            <!-- RISULTATI RICERCA -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 max-h-[500px] overflow-y-auto space-y-2">
+              <div v-if="filteredPlayers.length === 0" class="text-center py-12 text-slate-500 text-sm">
+                Nessun giocatore (o Listone non importato). Vai in Impostazioni per importare Excel.
+              </div>
+              <div v-for="p in filteredPlayers" :key="p.id" @click="selectPlayer(p)"
+                   :class="['p-3 rounded-xl border transition cursor-pointer flex items-center justify-between', selectedPlayer && selectedPlayer.id === p.id ? 'bg-indigo-950/40 border-indigo-500' : 'bg-slate-950/70 border-slate-800/80', p.stato === 'ACQUISTATO' ? 'opacity-50 bg-slate-900/30' : '']">
+                <div class="flex items-center gap-3">
+                  <span :class="['w-8 h-8 rounded-lg font-black text-xs flex items-center justify-center text-white shrink-0', roleBadgeBg(p.ruolo)]">{{ p.ruolo }}</span>
+                  <div>
+                    <div class="font-bold text-slate-100 flex items-center gap-2">
+                      <span>{{ p.nome }}</span>
+                      <span v-if="p.stato === 'ACQUISTATO'" class="text-[10px] bg-rose-500/20 text-rose-400 border border-rose-500/30 px-1.5 py-0.5 rounded font-bold">ACQUISTATO ({{ p.prezzo }} cr)</span>
+                    </div>
+                    <div class="text-xs text-slate-400">{{ p.squadra }} • Quot: <span class="font-bold text-slate-200">{{ p.quotazione }} cr</span></div>
+                  </div>
+                </div>
+                <div class="shrink-0">
+                  <button v-if="p.stato === 'DISPONIBILE'" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs shadow">Seleziona</button>
+                  <span v-else class="text-xs text-slate-500 font-semibold px-2">Preso</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- SCHEDA ACQUISTO REATTIVA -->
+            <div v-if="selectedPlayer && selectedPlayer.stato === 'DISPONIBILE'" class="bg-gradient-to-b from-slate-900 to-indigo-950/30 border-2 border-indigo-500/60 rounded-2xl p-5 space-y-4 shadow-2xl">
+              <div class="flex items-start justify-between border-b border-slate-800 pb-3">
+                <div>
+                  <h3 class="text-2xl font-black text-white flex items-center gap-2 mt-0.5">
+                    {{ selectedPlayer.nome }} <span :class="['text-xs px-2 py-0.5 rounded text-white font-bold', roleBadgeBg(selectedPlayer.ruolo)]">{{ selectedPlayer.ruolo }}</span>
+                  </h3>
+                </div>
+                <button @click="selectedPlayer = null" class="text-slate-500 hover:text-white text-lg">✕</button>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950/80 p-4 rounded-xl border border-slate-800">
+                <div>
+                  <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Prezzo Offerta (Crediti)</label>
+                  <div class="flex items-center gap-2">
+                    <button @click="adjustPrice(-5)" class="px-3 py-2 bg-slate-800 rounded-lg text-white font-bold">-5</button>
+                    <button @click="adjustPrice(-1)" class="px-3 py-2 bg-slate-800 rounded-lg text-white font-bold">-1</button>
+                    <input v-model.number="offerPrice" type="number" min="1" :max="maxSpendableNext"
+                           class="w-full text-center py-2 bg-slate-900 border border-indigo-500 rounded-xl text-xl font-black text-amber-400 focus:outline-none">
+                    <button @click="adjustPrice(1)" class="px-3 py-2 bg-slate-800 rounded-lg text-white font-bold">+1</button>
+                    <button @click="adjustPrice(5)" class="px-3 py-2 bg-slate-800 rounded-lg text-white font-bold">+5</button>
+                  </div>
+                </div>
+                <div class="flex flex-col justify-center">
+                  <div class="text-xs text-slate-400">Massimo Spendibile Ora:</div>
+                  <div class="text-lg font-black text-emerald-400">{{ maxSpendableNext }} Crediti</div>
+                </div>
+              </div>
+
+              <!-- INDICATORI PREZZO -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                  <span class="text-slate-400 block">Diff vs Listone:</span>
+                  <span :class="['font-bold text-sm', (offerPrice - selectedPlayer.quotazione) > 0 ? 'text-amber-400' : 'text-emerald-400']">
+                    {{ offerPrice - selectedPlayer.quotazione >= 0 ? '+' : '' }}{{ offerPrice - selectedPlayer.quotazione }} cr
+                  </span>
+                </div>
+                <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                  <span class="text-slate-400 block">Incidenza Budget:</span>
+                  <span class="font-bold text-sm text-indigo-300">{{ ((offerPrice / activeAuction.config.budget) * 100).toFixed(1) }}%</span>
+                </div>
+                <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                  <span class="text-slate-400 block">Valutazione:</span>
+                  <div class="font-bold text-xs mt-0.5" :class="priceIndicator(selectedPlayer.quotazione, offerPrice).color">
+                    {{ priceIndicator(selectedPlayer.quotazione, offerPrice).label }}
+                  </div>
+                </div>
+              </div>
+
+              <button @click="confirmPurchase" :disabled="!canBuySelected"
+                      :class="['w-full py-3.5 rounded-xl font-black text-base shadow-xl transition flex items-center justify-center gap-2',
+                               canBuySelected ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-800 text-slate-500 cursor-not-allowed']">
+                🛒 CONFERMA ACQUISTO ({{ offerPrice }} CR)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== TAB: ROSA COMPLETA ===== -->
+        <div v-if="currentTab === 'rosa'" class="space-y-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div v-for="role in ['P', 'D', 'C', 'A']" :key="role" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div class="flex items-center gap-2">
+                  <span :class="['w-6 h-6 rounded text-xs flex items-center justify-center text-white font-bold', roleBadgeBg(role)]">{{ role }}</span>
+                  <span class="font-bold text-sm text-white">{{ roleFullName(role) }}</span>
+                </div>
+                <span class="text-xs font-bold text-indigo-400">{{ rolePurchasedCount[role] }} / {{ activeAuction.config.role_targets[role] }}</span>
+              </div>
+              <div class="space-y-2">
+                <div v-for="item in getRosaByRole(role)" :key="item.id" class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex justify-between text-xs">
+                  <div>
+                    <div class="font-bold text-slate-100">{{ item.nome }}</div>
+                    <div class="text-[10px] text-slate-400">{{ item.squadra }}</div>
+                  </div>
+                  <div class="text-right font-black text-amber-400 text-sm">{{ item.prezzo }} cr</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== TAB: STORICO E CORREZIONI ===== -->
+        <div v-if="currentTab === 'storico'" class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+          <table class="w-full text-left text-xs text-slate-300">
+            <thead class="bg-slate-950 text-slate-400 uppercase font-bold text-[10px]">
+              <tr>
+                <th class="p-3">Giocatore</th><th class="p-3">Ruolo</th><th class="p-3">Prezzo Pagato</th><th class="p-3 text-right">Azioni</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60">
+              <tr v-for="item in purchasesReversed" :key="item.id">
+                <td class="p-3 font-bold text-white">{{ getPlayerName(item.player_id) }}</td>
+                <td class="p-3">{{ getPlayerRole(item.player_id) }}</td>
+                <td class="p-3 font-black text-amber-400">{{ item.prezzo }} cr</td>
+                <td class="p-3 text-right space-x-2">
+                  <button @click="openEditModal(item)" class="px-2 py-1 bg-slate-800 text-white rounded font-semibold text-[11px]">✏️</button>
+                  <button @click="deletePurchaseAPI(item)" class="px-2 py-1 bg-rose-900/60 text-rose-200 rounded font-semibold text-[11px]">🗑️</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ===== TAB: IMPOSTAZIONI ASTA ===== -->
+        <div v-if="currentTab === 'impostazioni'" class="bg-slate-900 p-6 rounded-2xl space-y-6 max-w-3xl mx-auto border border-slate-800">
+          <h2 class="text-lg font-bold text-white border-b border-slate-800 pb-3">Importa Listone Excel per questa Asta</h2>
+          <p class="text-xs text-slate-400">Assicurati che il file Excel abbia Colonne fisse: A=Ruolo, B=Nome, C=Squadra, D=Quotazione.</p>
+          <input type="file" @change="handleExcelFileUpload" accept=".xlsx, .xls"
+                 class="block w-full text-xs text-slate-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:bg-indigo-600 file:text-white cursor-pointer">
+          
+          <div class="pt-6 border-t border-slate-800">
+            <button @click="exportAuctionJSON" class="py-2 px-4 bg-slate-800 text-white text-xs font-bold rounded-xl border border-slate-700">📥 Esporta Backup (JSON)</button>
+          </div>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- ================= MODALS ================= -->
+    <!-- Modale Nuova Asta -->
+    <div v-if="showNewAuctionModal" class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4">
+        <h3 class="text-base font-bold text-white">Configura Nuova Asta</h3>
+        
+        <div class="space-y-3 text-xs">
+          <div><label class="block font-bold text-slate-300">Nome Asta</label><input v-model="newAuctionForm.name" type="text" class="w-full p-2 bg-slate-950 border border-slate-800 rounded"></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="block font-bold text-slate-300">Budget Iniziale</label><input v-model.number="newAuctionForm.budget" type="number" class="w-full p-2 bg-slate-950 border border-slate-800 rounded"></div>
+            <div><label class="block font-bold text-slate-300">Totale Giocatori (Rosa)</label><input v-model.number="newAuctionForm.total_players" type="number" class="w-full p-2 bg-slate-950 border border-slate-800 rounded"></div>
+          </div>
+          
+          <p class="font-bold text-slate-400 pt-2 border-t border-slate-800">Target Ruoli (P, D, C, A)</p>
+          <div class="grid grid-cols-4 gap-2">
+            <input v-model.number="newAuctionForm.role_targets.P" type="number" class="w-full p-2 bg-slate-950 border border-slate-800 rounded text-center">
+            <input v-model.number="newAuctionForm.role_targets.D" type="number" class="w-full p-2 bg-slate-950 border border-slate-800 rounded text-center">
+            <input v-model.number="newAuctionForm.role_targets.C" type="number" class="w-full p-2 bg-slate-950 border border-slate-800 rounded text-center">
+            <input v-model.number="newAuctionForm.role_targets.A" type="number" class="w-full p-2 bg-slate-950 border border-slate-800 rounded text-center">
+          </div>
+          <p class="font-bold text-slate-400 pt-2">Percentuale Budget Teorico (%)</p>
+          <div class="grid grid-cols-4 gap-2">
+            <input v-model.number="newAuctionForm.role_percents.P" type="number" class="w-full p-2 bg-slate-950 border border-slate-800 rounded text-center">
+            <input v-model.number="newAuctionForm.role_percents.D" type="number" class="w-full p-2 bg-slate-950 border border-slate-800 rounded text-center">
+            <input v-model.number="newAuctionForm.role_percents.C" type="number" class="w-full p-2 bg-slate-950 border border-slate-800 rounded text-center">
+            <input v-model.number="newAuctionForm.role_percents.A" type="number" class="w-full p-2 bg-slate-950 border border-slate-800 rounded text-center">
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button @click="showNewAuctionModal = false" class="px-4 py-2 bg-slate-800 text-white text-xs font-bold rounded-xl">Annulla</button>
+          <button @click="createAuction" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl">Crea Asta</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale Modifica Acquisto -->
+    <div v-if="editingPurchase" class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
+        <h3 class="text-base font-bold text-white">Modifica Prezzo</h3>
+        <input v-model.number="editPriceInput" type="number" class="w-full px-3 py-2 bg-slate-950 border border-indigo-500 rounded-xl text-amber-400 font-black text-center text-xl">
+        <div class="flex justify-end gap-2">
+          <button @click="editingPurchase = null" class="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded">Annulla</button>
+          <button @click="savePurchaseEditAPI" class="px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded">Salva</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, computed, watch, onMounted } = Vue;
+
+    createApp({
+      setup() {
+        const currentScreen = ref('home');
+        const currentTab = ref('asta');
+        const tabs = [
+          { id: 'asta', label: 'Asta Live', icon: '⚡' },
+          { id: 'rosa', label: 'Mia Rosa', icon: '📋' },
+          { id: 'storico', label: 'Storico', icon: '📜' },
+          { id: 'impostazioni', label: 'Impostazioni', icon: '⚙️' }
+        ];
+
+        // API Context
+        const API_URL = '/api/auction';
+        const syncStatus = ref('ok'); // 'ok', 'syncing', 'error'
+        const failedRequestsQueue = ref([]);
+        const notification = ref({ show: false, message: '', type: 'success' });
+
+        const showToast = (msg, type = 'success') => {
+          notification.value = { show: true, message: msg, type };
+          setTimeout(() => { notification.value.show = false; }, 3000);
+        };
+
+        // Core logic wrapper for D1 API calls to handle status & offline robustness
+        const apiCall = async (bodyPayload) => {
+          syncStatus.value = 'syncing';
+          try {
+            const res = await fetch(API_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(bodyPayload)
+            });
+            if (!res.ok) throw new Error('API Error');
+            syncStatus.value = 'ok';
+            return await res.json();
+          } catch (e) {
+            syncStatus.value = 'error';
+            failedRequestsQueue.value.push(bodyPayload);
+            throw e;
+          }
+        };
+
+        const retrySync = async () => {
+          if (failedRequestsQueue.value.length === 0) return;
+          syncStatus.value = 'syncing';
+          try {
+            while (failedRequestsQueue.value.length > 0) {
+              const payload = failedRequestsQueue.value[0];
+              await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+              failedRequestsQueue.value.shift();
+            }
+            syncStatus.value = 'ok';
+            showToast('Sincronizzazione recuperata');
+          } catch (e) {
+            syncStatus.value = 'error';
+            showToast('Errore di connessione persistente', 'error');
+          }
+        };
+
+        // ================= HOME / MULTI-ASTA =================
+        const loadingAuctions = ref(true);
+        const auctionsList = ref([]);
+        const showNewAuctionModal = ref(false);
+        const newAuctionForm = ref({
+          name: 'Fantacalcio ' + new Date().getFullYear(),
+          budget: 500, total_players: 25,
+          role_targets: { P: 3, D: 8, C: 8, A: 6 },
+          role_percents: { P: 8, D: 20, C: 30, A: 42 }
+        });
+
+        const loadAuctions = async () => {
+          loadingAuctions.value = true;
+          try {
+            const res = await fetch(`${API_URL}?action=GET_AUCTIONS`, { method: 'POST' });
+            auctionsList.value = await res.json();
+          } catch(e) {
+            showToast('Errore caricamento aste', 'error');
+          }
+          loadingAuctions.value = false;
+        };
+
+        const createAuction = async () => {
+          const id = 'auc_' + Date.now();
+          await apiCall({ action: 'CREATE_AUCTION', ...newAuctionForm.value, id });
+          showNewAuctionModal.value = false;
+          showToast('Asta creata con successo');
+          loadAuctions();
+        };
+
+        const deleteAuction = async (id) => {
+          if(!confirm('Eliminare definitivamente l\'asta e tutti i suoi dati?')) return;
+          await apiCall({ action: 'DELETE_AUCTION', auctionId: id });
+          loadAuctions();
+        };
+
+        // ================= ACTIVE AUCTION CONTEXT =================
+        const activeAuction = ref(null);
+        
+        const openAuction = async (id) => {
+          syncStatus.value = 'syncing';
+          try {
+            const res = await fetch(`${API_URL}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'GET_AUCTION_DATA', auctionId: id }) });
+            activeAuction.value = await res.json();
+            currentScreen.value = 'auction';
+            currentTab.value = 'asta';
+            syncStatus.value = 'ok';
+          } catch (e) {
+            syncStatus.value = 'error';
+            showToast('Impossibile caricare l\'asta', 'error');
+          }
+        };
+
+        const goHome = () => {
+          if (failedRequestsQueue.value.length > 0) {
+            if(!confirm('Attenzione: ci sono salvataggi in sospeso. Uscire comunque?')) return;
+          }
+          currentScreen.value = 'home';
+          activeAuction.value = null;
+          loadAuctions();
+        };
+
+        // ===== AUCTION COMPUTEDS =====
+        const spentTotal = computed(() => activeAuction.value ? activeAuction.value.purchases.reduce((s, p) => s + p.prezzo, 0) : 0);
+        const creditsRemaining = computed(() => activeAuction.value ? activeAuction.value.config.budget - spentTotal.value : 0);
+        const purchasedCount = computed(() => activeAuction.value ? activeAuction.value.purchases.length : 0);
+        const remainingCount = computed(() => activeAuction.value ? activeAuction.value.config.total_players - purchasedCount.value : 0);
+        
+        const rolePurchasedCount = computed(() => {
+          if(!activeAuction.value) return { P:0,D:0,C:0,A:0 };
+          const map = { P:0,D:0,C:0,A:0 };
+          activeAuction.value.purchases.forEach(p => { map[getPlayerRole(p.player_id)]++; });
+          return map;
+        });
+
+        const roleRemainingCount = computed(() => {
+          if(!activeAuction.value) return { P:0,D:0,C:0,A:0 };
+          const tgts = activeAuction.value.config.role_targets;
+          return {
+            P: Math.max(0, tgts.P - rolePurchasedCount.value.P),
+            D: Math.max(0, tgts.D - rolePurchasedCount.value.D),
+            C: Math.max(0, tgts.C - rolePurchasedCount.value.C),
+            A: Math.max(0, tgts.A - rolePurchasedCount.value.A),
+          };
+        });
+
+        const maxSpendableNext = computed(() => remainingCount.value <= 1 ? creditsRemaining.value : Math.max(1, creditsRemaining.value - (remainingCount.value - 1)));
+
+        // Live Filters
+        const searchQuery = ref('');
+        const selectedRoleFilter = ref('ALL');
+        const selectedTeamFilter = ref('ALL');
+        const availableTeams = computed(() => activeAuction.value ? Array.from(new Set(activeAuction.value.players.map(p=>p.squadra))).sort() : []);
+        
+        const filteredPlayers = computed(() => {
+          if(!activeAuction.value) return [];
+          let list = activeAuction.value.players;
+          if (searchQuery.value.trim()) {
+            const q = searchQuery.value.toLowerCase().trim();
+            list = list.filter(p => p.nome.toLowerCase().includes(q) || p.squadra.toLowerCase().includes(q));
+          }
+          if (selectedRoleFilter.value !== 'ALL') list = list.filter(p => p.ruolo === selectedRoleFilter.value);
+          if (selectedTeamFilter.value !== 'ALL') list = list.filter(p => p.squadra === selectedTeamFilter.value);
+          return list;
+        });
+
+        // ================= ACTIONS =================
+        const selectedPlayer = ref(null);
+        const offerPrice = ref(1);
+        
+        const selectPlayer = (p) => {
+          selectedPlayer.value = p;
+          offerPrice.value = Math.max(1, p.quotazione || 1);
+        };
+        const adjustPrice = (d) => { if(offerPrice.value + d >= 1 && offerPrice.value + d <= maxSpendableNext.value) offerPrice.value += d; };
+        
+        const canBuySelected = computed(() => selectedPlayer.value && roleRemainingCount.value[selectedPlayer.value.ruolo] > 0 && offerPrice.value >= 1 && offerPrice.value <= maxSpendableNext.value);
+
+        const confirmPurchase = async () => {
+          if (!canBuySelected.value) return;
+          const p = selectedPlayer.value;
+          const purchaseId = 'pur_' + Date.now();
+          
+          // Optimistic UI Update
+          const oldStato = p.stato;
+          p.stato = 'ACQUISTATO';
+          p.prezzo = offerPrice.value;
+          activeAuction.value.purchases.push({
+            id: purchaseId, auction_id: activeAuction.value.config.id, player_id: p.id, prezzo: offerPrice.value, timestamp: new Date().toISOString()
+          });
+
+          selectedPlayer.value = null;
+          showToast(`Acquistato ${p.nome}!`);
+
+          // Background Sync API
+          try {
+            await apiCall({
+              action: 'ADD_PURCHASE', auctionId: activeAuction.value.config.id,
+              purchase: { id: purchaseId, playerId: p.id, prezzo: offerPrice.value, timestamp: new Date().toISOString() }
+            });
+          } catch(e) { /* error handled in apiCall wrapper */ }
+        };
+
+        // Storage & Correction
+        const purchasesReversed = computed(() => activeAuction.value ? [...activeAuction.value.purchases].reverse() : []);
+        const editingPurchase = ref(null);
+        const editPriceInput = ref(1);
+
+        const openEditModal = (item) => { editingPurchase.value = item; editPriceInput.value = item.prezzo; };
+        
+        const savePurchaseEditAPI = async () => {
+          if(!editingPurchase.value) return;
+          const diff = editPriceInput.value - editingPurchase.value.prezzo;
+          if (creditsRemaining.value - diff < 0) { showToast('Crediti insufficienti!', 'error'); return; }
+
+          // Optimistic
+          editingPurchase.value.prezzo = editPriceInput.value;
+          const p = activeAuction.value.players.find(x => x.id === editingPurchase.value.player_id);
+          if (p) p.prezzo = editPriceInput.value;
+          const payload = { action: 'EDIT_PURCHASE', auctionId: activeAuction.value.config.id, purchaseId: editingPurchase.value.id, playerId: p.id, newPrezzo: editPriceInput.value };
+          editingPurchase.value = null;
+          
+          await apiCall(payload);
+        };
+
+        const deletePurchaseAPI = async (item) => {
+          if(!confirm('Eliminare questo acquisto?')) return;
+          
+          // Optimistic
+          activeAuction.value.purchases = activeAuction.value.purchases.filter(x => x.id !== item.id);
+          const p = activeAuction.value.players.find(x => x.id === item.player_id);
+          if (p) { p.stato = 'DISPONIBILE'; p.prezzo = null; }
+          
+          await apiCall({ action: 'DELETE_PURCHASE', auctionId: activeAuction.value.config.id, purchaseId: item.id, playerId: item.player_id });
+        };
+
+        // EXCEL IMPORT MAPPATURA FISSA (A,B,C,D)
+        const handleExcelFileUpload = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = async (evt) => {
+            const data = new Uint8Array(evt.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+            
+            const parsed = [];
+            json.slice(1).forEach((row, idx) => {
+              if(!row[1]) return; // salta senza nome in B
+              parsed.push({
+                id: 'p_' + idx + '_' + Date.now(),
+                ruolo: String(row[0]||'C').trim().substring(0,1).toUpperCase(),
+                nome: String(row[1]).trim(),
+                squadra: String(row[2]||'Sconosciuta').trim(),
+                quotazione: parseInt(row[3]) || 1,
+                stato: 'DISPONIBILE'
+              });
+            });
+            
+            activeAuction.value.players = parsed;
+            activeAuction.value.purchases = []; // Reset rosa
+            showToast('Listone caricato! Sincronizzazione in corso...');
+            
+            await apiCall({ action: 'IMPORT_PLAYERS', auctionId: activeAuction.value.config.id, players: parsed });
+          };
+          reader.readAsArrayBuffer(file);
+        };
+
+        // HELPERS UI
+        const roleTheoreticalBudgets = computed(() => {
+          if(!activeAuction.value) return { P:0,D:0,C:0,A:0 };
+          const b = activeAuction.value.config.budget; const p = activeAuction.value.config.role_percents;
+          return { P: Math.round(b*(p.P/100)), D: Math.round(b*(p.D/100)), C: Math.round(b*(p.C/100)), A: Math.round(b*(p.A/100)) };
+        });
+        const roleSpent = computed(() => {
+          if(!activeAuction.value) return { P:0,D:0,C:0,A:0 };
+          const map = { P:0,D:0,C:0,A:0 };
+          activeAuction.value.purchases.forEach(pur => { map[getPlayerRole(pur.player_id)] += pur.prezzo; });
+          return map;
+        });
+        const roleTheoreticalRemaining = computed(() => {
+          return { P: roleTheoreticalBudgets.value.P - roleSpent.value.P, D: roleTheoreticalBudgets.value.D - roleSpent.value.D, C: roleTheoreticalBudgets.value.C - roleSpent.value.C, A: roleTheoreticalBudgets.value.A - roleSpent.value.A };
+        });
+
+        const getPlayerRole = (pid) => activeAuction.value.players.find(x=>x.id===pid)?.ruolo || 'C';
+        const getPlayerName = (pid) => activeAuction.value.players.find(x=>x.id===pid)?.nome || 'Sconosciuto';
+        const roleFullName = (r) => ({ P: 'Portieri', D: 'Difensori', C: 'Centrocampisti', A: 'Attaccanti' }[r] || r);
+        const roleBadgeBg = (r) => ({ P: 'bg-amber-600', D: 'bg-emerald-600', C: 'bg-blue-600', A: 'bg-rose-600' }[r] || 'bg-slate-700');
+        const roleCardBorder = (r) => ({ P: 'border-amber-500/30', D: 'border-emerald-500/30', C: 'border-blue-500/30', A: 'border-rose-500/30' }[r] || 'border-slate-800');
+        
+        const priceIndicator = (quot, price) => {
+          if (price <= quot * 1.15) return { label: '🟢 Contenuto', color: 'text-emerald-400' };
+          if (price <= quot * 1.80) return { label: '🟡 Elevato', color: 'text-amber-400' };
+          return { label: '🔴 Molto Elevato', color: 'text-rose-400' };
+        };
+        const getRosaByRole = (r) => {
+          if(!activeAuction.value) return [];
+          const res = activeAuction.value.purchases.filter(p => getPlayerRole(p.player_id) === r)
+            .map(p => ({ ...activeAuction.value.players.find(x=>x.id===p.player_id), prezzo: p.prezzo }));
+          return res.sort((a,b)=>b.prezzo - a.prezzo);
+        };
+
+        const exportAuctionJSON = () => {
+          const blob = new Blob([JSON.stringify(activeAuction.value, null, 2)], { type: 'application/json' });
+          const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+          a.download = `asta_${activeAuction.value.config.name}.json`; a.click();
+        };
+
+        // ================= MIGRAZIONE VECCHIO LOCALSTORAGE =================
+        const legacyMigrationAvailable = ref(false);
+        onMounted(() => {
+          if(localStorage.getItem('fanta_auction_app_v2')) legacyMigrationAvailable.value = true;
+          loadAuctions();
+        });
+
+        const migrateLegacyData = async () => {
+          try {
+            const legacy = JSON.parse(localStorage.getItem('fanta_auction_app_v2'));
+            const id = 'auc_legacy_' + Date.now();
+            // Crea Asta
+            await apiCall({
+              action: 'CREATE_AUCTION', id, name: legacy.config.ligaName + ' (Recuperata)',
+              budget: legacy.config.initialBudget, total_players: legacy.config.totalPlayers,
+              role_targets: legacy.config.roleTargets, role_percents: legacy.config.rolePercents
+            });
+            // Importa Giocatori
+            await apiCall({ action: 'IMPORT_PLAYERS', auctionId: id, players: legacy.players });
+            // Importa Acquisti
+            for(let p of legacy.purchases) {
+              await apiCall({ action: 'ADD_PURCHASE', auctionId: id, purchase: { id: p.id, playerId: p.playerId, prezzo: p.prezzo, timestamp: p.timestamp } });
+            }
+            localStorage.removeItem('fanta_auction_app_v2');
+            legacyMigrationAvailable.value = false;
+            showToast('Migrazione D1 completata!');
+            loadAuctions();
+          } catch(e) {
+            showToast('Errore migrazione', 'error');
+          }
+        };
+
+        return {
+          currentScreen, currentTab, tabs,
+          syncStatus, retrySync,
+          loadingAuctions, auctionsList, showNewAuctionModal, newAuctionForm,
+          loadAuctions, createAuction, deleteAuction, openAuction, goHome,
+          activeAuction, spentTotal, creditsRemaining, purchasedCount, remainingCount,
+          rolePurchasedCount, roleRemainingCount, maxSpendableNext, roleTheoreticalBudgets, roleSpent, roleTheoreticalRemaining,
+          searchQuery, selectedRoleFilter, selectedTeamFilter, availableTeams, filteredPlayers,
+          selectedPlayer, offerPrice, selectPlayer, adjustPrice, canBuySelected, confirmPurchase,
+          purchasesReversed, editingPurchase, editPriceInput, openEditModal, savePurchaseEditAPI, deletePurchaseAPI,
+          handleExcelFileUpload, getRosaByRole, getPlayerName, getPlayerRole, roleFullName, roleBadgeBg, roleCardBorder, priceIndicator,
+          exportAuctionJSON, legacyMigrationAvailable, migrateLegacyData, notification
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
