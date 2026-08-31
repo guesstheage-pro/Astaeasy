@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestionale Asta Fantacalcio Classic</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    [v-cloak] { display: none !important; }
+    /* Custom Scrollbar for fast auction usage */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen antialiased selection:bg-indigo-500 selection:text-white">
+
+  <div id="app" v-cloak class="min-h-screen flex flex-col">
+
+    <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-30 shadow-md">
+      <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
+        
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center font-black text-xl shadow-lg shadow-indigo-500/20">
+            ⚡
+          </div>
+          <div>
+            <h1 class="text-lg font-bold leading-tight text-white">{{ config.ligaName || 'Asta Fantacalcio' }}</h1>
+            <span class="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1 w-fit mt-0.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Autosave Attivo
+            </span>
+          </div>
+        </div>
+
+        <div v-if="config.isConfigured" class="flex items-center gap-3 bg-slate-950/80 p-1.5 rounded-xl border border-slate-800 text-xs sm:text-sm">
+          <div class="px-3 py-1 rounded-lg bg-slate-900 border border-slate-800">
+            <span class="text-slate-400 block text-[10px] uppercase font-bold">Crediti</span>
+            <span class="font-bold text-emerald-400 text-base">{{ creditsRemaining }}</span>
+            <span class="text-slate-500 text-xs">/ {{ config.initialBudget }}</span>
+          </div>
+
+          <div class="px-3 py-1 rounded-lg bg-slate-900 border border-slate-800">
+            <span class="text-slate-400 block text-[10px] uppercase font-bold">Rosa</span>
+            <span class="font-bold text-indigo-400 text-base">{{ purchasedCount }}</span>
+            <span class="text-slate-500 text-xs">/ {{ config.totalPlayers }}</span>
+          </div>
+
+          <div class="px-3 py-1 rounded-lg bg-slate-900 border border-slate-800">
+            <span class="text-slate-400 block text-[10px] uppercase font-bold">Max Spendibile</span>
+            <span class="font-bold text-amber-400 text-base">{{ maxSpendableNext }} cr</span>
+          </div>
+        </div>
+
+        <nav class="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 w-full md:w-auto">
+          <button v-for="tab in tabs" :key="tab.id" @click="currentTab = tab.id"
+                  :class="['px-3 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap',
+                           currentTab === tab.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60']">
+            <span>{{ tab.icon }}</span>
+            <span>{{ tab.label }}</span>
+          </button>
+        </nav>
+
+      </div>
+    </header>
+
+    <transition enter-active-class="transition duration-300 ease-out" enter-from-class="transform translate-y-2 opacity-0" enter-to-class="transform translate-y-0 opacity-100" leave-active-class="transition duration-200 ease-in" leave-from-class="opacity-100" leave-to-class="opacity-0">
+      <div v-if="notification.show" :class="['fixed bottom-5 right-5 z-50 px-4 py-3 rounded-xl shadow-2xl border text-sm font-bold flex items-center gap-2',
+           notification.type === 'error' ? 'bg-rose-950 text-rose-200 border-rose-800' : 'bg-emerald-950 text-emerald-200 border-emerald-800']">
+        <span>{{ notification.type === 'error' ? '⚠️' : '✅' }}</span>
+        <span>{{ notification.message }}</span>
+      </div>
+    </transition>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
+
+      <section v-if="currentTab === 'asta'" class="space-y-6">
+        
+        <div v-if="!config.isConfigured || players.length === 0" class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center max-w-xl mx-auto space-y-4">
+          <div class="text-4xl">⚙️</div>
+          <h2 class="text-xl font-bold text-white">Asta non ancora configurata</h2>
+          <p class="text-slate-400 text-sm">Per iniziare, configura il budget e carica il file Excel del listone nella sezione Impostazioni.</p>
+          <button @click="currentTab = 'impostazioni'" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 font-bold rounded-xl text-sm transition shadow-lg shadow-indigo-600/30">
+            Vai a Impostazioni
+          </button>
+        </div>
+
+        <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+          <div class="lg:col-span-4 space-y-4">
+            
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4">
+              <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                <span>Riepilogo Ruoli & Budget</span>
+                <span class="text-xs text-indigo-400 font-normal">Obiettivi</span>
+              </h2>
+
+              <div class="grid grid-cols-1 gap-2.5">
+                <div v-for="role in ['P', 'D', 'C', 'A']" :key="role" 
+                     class="p-3 rounded-xl border bg-slate-950/60 transition"
+                     :class="roleCardBorder(role)">
+                  
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <span :class="['w-7 h-7 rounded-lg font-black text-xs flex items-center justify-center text-white', roleBadgeBg(role)]">
+                        {{ role }}
+                      </span>
+                      <div>
+                        <span class="font-bold text-sm text-slate-200">{{ roleFullName(role) }}</span>
+                        <span class="text-xs text-slate-400 block">
+                          {{ rolePurchasedCount[role] }} / {{ config.roleTargets[role] }} Acquistati
+                        </span>
+                      </div>
+                    </div>
+
+                    <div class="text-right">
+                      <div class="text-xs font-bold text-slate-300">
+                        {{ roleSpent[role] }} <span class="text-[10px] text-slate-500">/ {{ roleTheoreticalBudgets[role] }} cr</span>
+                      </div>
+                      <div class="text-[11px] text-slate-400">
+                        Residuo Teorico: <span :class="roleTheoreticalRemaining[role] < 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'">
+                          {{ roleTheoreticalRemaining[role] }} cr
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="mt-2 w-full bg-slate-800 h-1.5 rounded-full overflow-hidden flex">
+                    <div class="h-full bg-indigo-500 transition-all duration-300"
+                         :style="{ width: Math.min(100, (rolePurchasedCount[role] / config.roleTargets[role]) * 100) + '%' }"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-2 text-xs">
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Spesa Totale Effettiva:</span>
+                <span class="font-bold text-white">{{ spentTotal }} cr</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Posti Ancora Liberi:</span>
+                <span class="font-bold text-indigo-400">{{ remainingCount }} giocatori</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Prezzo Medio Rimanente:</span>
+                <span class="font-bold text-amber-400">{{ remainingCount > 0 ? (creditsRemaining / remainingCount).toFixed(1) : 0 }} cr/giocatore</span>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="lg:col-span-8 space-y-4">
+            
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <div class="flex flex-col sm:flex-row gap-3">
+                <div class="relative flex-1">
+                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">🔍</span>
+                  <input v-model="searchQuery" type="text" placeholder="Cerca calciatore o squadra (es. Lautaro, Inter, Barella)..."
+                         class="w-full pl-9 pr-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm focus:outline-none focus:border-indigo-500 text-white placeholder-slate-500">
+                </div>
+
+                <select v-model="selectedTeamFilter" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-semibold text-slate-300 focus:outline-none focus:border-indigo-500">
+                  <option value="ALL">Tutte le Squadre</option>
+                  <option v-for="team in availableTeams" :key="team" :value="team">{{ team }}</option>
+                </select>
+              </div>
+
+              <div class="flex items-center justify-between flex-wrap gap-2 pt-1">
+                <div class="flex items-center gap-1.5">
+                  <button v-for="r in ['ALL', 'P', 'D', 'C', 'A']" :key="r" @click="selectedRoleFilter = r"
+                          :class="['px-3 py-1 rounded-lg text-xs font-bold transition',
+                                   selectedRoleFilter === r ? 'bg-indigo-600 text-white' : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white']">
+                    {{ r === 'ALL' ? 'Tutti I Ruoli' : r }}
+                  </button>
+                </div>
+
+                <div class="text-xs text-slate-400 font-semibold">
+                  Trovati: <span class="text-white">{{ filteredPlayers.length }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 max-h-[500px] overflow-y-auto space-y-2">
+              <div v-if="filteredPlayers.length === 0" class="text-center py-12 text-slate-500 text-sm">
+                Nessun giocatore trovato con i filtri selezionati.
+              </div>
+
+              <div v-for="p in filteredPlayers" :key="p.id"
+                   @click="selectPlayer(p)"
+                   :class="['p-3 rounded-xl border transition cursor-pointer flex items-center justify-between',
+                            selectedPlayer && selectedPlayer.id === p.id ? 'bg-indigo-950/40 border-indigo-500' : 'bg-slate-950/70 border-slate-800/80 hover:border-slate-700',
+                            p.stato === 'ACQUISTATO' ? 'opacity-50 bg-slate-900/30' : '']">
+                
+                <div class="flex items-center gap-3">
+                  <span :class="['w-8 h-8 rounded-lg font-black text-xs flex items-center justify-center text-white shrink-0', roleBadgeBg(p.ruolo)]">
+                    {{ p.ruolo }}
+                  </span>
+                  <div>
+                    <div class="font-bold text-slate-100 flex items-center gap-2">
+                      <span>{{ p.nome }}</span>
+                      <span v-if="p.stato === 'ACQUISTATO'" class="text-[10px] bg-rose-500/20 text-rose-400 border border-rose-500/30 px-1.5 py-0.5 rounded font-bold">
+                        ACQUISTATO ({{ p.prezzo }} cr)
+                      </span>
+                    </div>
+                    <div class="text-xs text-slate-400">
+                      {{ p.squadra }} • Quotazione Listone: <span class="font-bold text-slate-200">{{ p.quotazione }} cr</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="shrink-0">
+                  <button v-if="p.stato === 'DISPONIBILE'" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs shadow transition">
+                    Seleziona
+                  </button>
+                  <span v-else class="text-xs text-slate-500 font-semibold px-2 py-1">Indisponibile</span>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="selectedPlayer && selectedPlayer.stato === 'DISPONIBILE'" class="bg-gradient-to-b from-slate-900 to-indigo-950/30 border-2 border-indigo-500/60 rounded-2xl p-5 space-y-4 shadow-2xl">
+              <div class="flex items-start justify-between border-b border-slate-800 pb-3">
+                <div>
+                  <span class="text-xs font-bold text-indigo-400 uppercase tracking-widest">Scheda Analisi Acquisto</span>
+                  <h3 class="text-2xl font-black text-white flex items-center gap-2 mt-0.5">
+                    <span>{{ selectedPlayer.nome }}</span>
+                    <span :class="['text-xs px-2 py-0.5 rounded text-white font-bold', roleBadgeBg(selectedPlayer.ruolo)]">
+                      {{ selectedPlayer.ruolo }} - {{ selectedPlayer.squadra }}
+                    </span>
+                  </h3>
+                </div>
+                <button @click="selectedPlayer = null" class="text-slate-500 hover:text-white text-lg">✕</button>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950/80 p-4 rounded-xl border border-slate-800">
+                <div>
+                  <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Prezzo Offerta (Crediti)</label>
+                  <div class="flex items-center gap-2">
+                    <button @click="adjustPrice(-5)" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white font-bold">-5</button>
+                    <button @click="adjustPrice(-1)" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white font-bold">-1</button>
+                    <input v-model.number="offerPrice" type="number" min="1" :max="maxSpendableNext"
+                           class="w-full text-center py-2 bg-slate-900 border border-indigo-500 rounded-xl text-xl font-black text-amber-400 focus:outline-none">
+                    <button @click="adjustPrice(1)" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white font-bold">+1</button>
+                    <button @click="adjustPrice(5)" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white font-bold">+5</button>
+                  </div>
+                </div>
+
+                <div class="flex flex-col justify-center">
+                  <div class="text-xs text-slate-400">Massimo Spendibile Ora:</div>
+                  <div class="text-lg font-black text-emerald-400">{{ maxSpendableNext }} Crediti</div>
+                  <div class="text-[11px] text-slate-500">(Garantiti min 1 cr per i restanti {{ remainingCount - 1 }} giocatori)</div>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                
+                <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                  <span class="text-slate-400 block">Diff. vs Listone:</span>
+                  <span :class="['font-bold text-sm', (offerPrice - selectedPlayer.quotazione) > 0 ? 'text-amber-400' : 'text-emerald-400']">
+                    {{ offerPrice - selectedPlayer.quotazione >= 0 ? '+' : '' }}{{ offerPrice - selectedPlayer.quotazione }} cr
+                  </span>
+                </div>
+
+                <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                  <span class="text-slate-400 block">Incidenza Budget Tot.:</span>
+                  <span class="font-bold text-sm text-indigo-300">
+                    {{ ((offerPrice / config.initialBudget) * 100).toFixed(1) }}%
+                  </span>
+                </div>
+
+                <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                  <span class="text-slate-400 block">Residuo Ruolo Dopo:</span>
+                  <span :class="['font-bold text-sm', (roleTheoreticalRemaining[selectedPlayer.ruolo] - offerPrice) < 0 ? 'text-rose-400' : 'text-emerald-400']">
+                    {{ roleTheoreticalRemaining[selectedPlayer.ruolo] - offerPrice }} cr
+                  </span>
+                </div>
+
+                <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                  <span class="text-slate-400 block">Valutazione Prezzo:</span>
+                  <div class="font-bold text-xs mt-0.5" :class="priceIndicator(selectedPlayer.quotazione, offerPrice).color">
+                    {{ priceIndicator(selectedPlayer.quotazione, offerPrice).label }}
+                  </div>
+                </div>
+
+              </div>
+
+              <button @click="confirmPurchase" 
+                      :disabled="!canBuySelected"
+                      :class="['w-full py-3.5 rounded-xl font-black text-base shadow-xl transition flex items-center justify-center gap-2',
+                               canBuySelected ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30' : 'bg-slate-800 text-slate-500 cursor-not-allowed']">
+                <span>🛒 CONFERMA ACQUISTO ({{ offerPrice }} CR)</span>
+              </button>
+
+              <p v-if="roleRemainingCount[selectedPlayer.ruolo] <= 0" class="text-xs text-rose-400 text-center font-bold">
+                ⚠️ Hai già raggiunto il numero massimo di giocatori previsti per il ruolo {{ selectedPlayer.ruolo }} ({{ config.roleTargets[selectedPlayer.ruolo] }}).
+              </p>
+            </div>
+
+          </div>
+
+        </div>
+
+      </section>
+
+      <section v-if="currentTab === 'rosa'" class="space-y-6">
+        <div class="flex items-center justify-between flex-wrap gap-4 bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+          <div>
+            <h2 class="text-lg font-bold text-white">Rosa Acquistata</h2>
+            <p class="text-xs text-slate-400">Totale giocatori: {{ purchasedCount }} / {{ config.totalPlayers }} — Crediti Spesi: {{ spentTotal }} / {{ config.initialBudget }}</p>
+          </div>
+
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-slate-400">Ordina per:</span>
+            <select v-model="rosaSortOption" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 font-semibold text-slate-200">
+              <option value="price_desc">Prezzo Decrescente</option>
+              <option value="price_asc">Prezzo Crescente</option>
+              <option value="time">Ordine di Acquisto</option>
+              <option value="name">Alfabetico</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div v-for="role in ['P', 'D', 'C', 'A']" :key="role" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+              <div class="flex items-center gap-2">
+                <span :class="['w-6 h-6 rounded font-black text-xs flex items-center justify-center text-white', roleBadgeBg(role)]">{{ role }}</span>
+                <span class="font-bold text-sm text-white">{{ roleFullName(role) }}</span>
+              </div>
+              <span class="text-xs font-bold text-indigo-400">{{ rolePurchasedCount[role] }} / {{ config.roleTargets[role] }}</span>
+            </div>
+
+            <div class="space-y-2 max-h-[500px] overflow-y-auto">
+              <div v-if="getRosaByRole(role).length === 0" class="text-xs text-slate-500 italic py-4 text-center">
+                Nessun {{ roleFullName(role).toLowerCase() }} acquistato.
+              </div>
+
+              <div v-for="item in getRosaByRole(role)" :key="item.id" class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
+                <div>
+                  <div class="font-bold text-slate-100">{{ item.nome }}</div>
+                  <div class="text-[10px] text-slate-400">{{ item.squadra }} (Quot. {{ item.quotazione }})</div>
+                </div>
+                <div class="text-right font-black text-amber-400 text-sm">
+                  {{ item.prezzo }} cr
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-slate-800/80 text-xs text-slate-400 flex justify-between font-semibold">
+              <span>Totale Speso:</span>
+              <span class="text-white">{{ roleSpent[role] }} cr</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="currentTab === 'giocatori'" class="space-y-4">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+          <input v-model="searchQuery" type="text" placeholder="Filtra database per nome o squadra..."
+                 class="w-full md:w-80 px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-sm focus:outline-none focus:border-indigo-500 text-white">
+
+          <div class="flex items-center gap-2 overflow-x-auto w-full md:w-auto text-xs">
+            <button v-for="st in ['ALL', 'DISPONIBILE', 'ACQUISTATO']" :key="st" @click="availabilityFilter = st"
+                    :class="['px-3 py-1.5 rounded-xl font-bold transition', availabilityFilter === st ? 'bg-indigo-600 text-white' : 'bg-slate-950 text-slate-400 border border-slate-800']">
+              {{ st }}
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-slate-300">
+              <thead class="bg-slate-950 text-slate-400 uppercase font-bold text-[10px] tracking-wider border-b border-slate-800">
+                <tr>
+                  <th class="p-3">Ruolo</th>
+                  <th class="p-3">Nome</th>
+                  <th class="p-3">Squadra</th>
+                  <th class="p-3">Quotazione</th>
+                  <th class="p-3">Stato</th>
+                  <th class="p-3">Prezzo Pagato</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800/60">
+                <tr v-for="p in filteredPlayers" :key="p.id" class="hover:bg-slate-800/40 transition">
+                  <td class="p-3">
+                    <span :class="['w-6 h-6 rounded font-bold text-[10px] inline-flex items-center justify-center text-white', roleBadgeBg(p.ruolo)]">
+                      {{ p.ruolo }}
+                    </span>
+                  </td>
+                  <td class="p-3 font-bold text-white">{{ p.nome }}</td>
+                  <td class="p-3">{{ p.squadra }}</td>
+                  <td class="p-3 font-semibold">{{ p.quotazione }} cr</td>
+                  <td class="p-3">
+                    <span :class="['px-2 py-0.5 rounded text-[10px] font-bold', p.stato === 'ACQUISTATO' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30']">
+                      {{ p.stato }}
+                    </span>
+                  </td>
+                  <td class="p-3 font-bold text-amber-400">
+                    {{ p.stato === 'ACQUISTATO' ? p.prezzo + ' cr' : '-' }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="currentTab === 'storico'" class="space-y-4">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-bold text-white">Cronologia Acquisti</h2>
+            <p class="text-xs text-slate-400">Puoi correggere il prezzo o annullare un inserimento errato in qualsiasi momento.</p>
+          </div>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-slate-300">
+              <thead class="bg-slate-950 text-slate-400 uppercase font-bold text-[10px] border-b border-slate-800">
+                <tr>
+                  <th class="p-3">#</th>
+                  <th class="p-3">Ora</th>
+                  <th class="p-3">Giocatore</th>
+                  <th class="p-3">Ruolo</th>
+                  <th class="p-3">Squadra</th>
+                  <th class="p-3">Quotazione</th>
+                  <th class="p-3">Prezzo Pagato</th>
+                  <th class="p-3 text-right">Azioni</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800/60">
+                <tr v-if="purchases.length === 0">
+                  <td colspan="8" class="p-8 text-center text-slate-500">Nessun acquisto ancora effettuato.</td>
+                </tr>
+                <tr v-for="(item, idx) in purchasesSorted" :key="item.id" class="hover:bg-slate-800/40 transition">
+                  <td class="p-3 font-bold text-slate-500">{{ purchases.length - idx }}</td>
+                  <td class="p-3 text-slate-400">{{ formatTime(item.timestamp) }}</td>
+                  <td class="p-3 font-bold text-white">{{ item.nome }}</td>
+                  <td class="p-3">
+                    <span :class="['w-5 h-5 rounded text-[10px] font-bold inline-flex items-center justify-center text-white', roleBadgeBg(item.ruolo)]">
+                      {{ item.ruolo }}
+                    </span>
+                  </td>
+                  <td class="p-3">{{ item.squadra }}</td>
+                  <td class="p-3">{{ item.quotazione }} cr</td>
+                  <td class="p-3 font-black text-amber-400 text-sm">{{ item.prezzo }} cr</td>
+                  <td class="p-3 text-right space-x-2">
+                    <button @click="openEditModal(item)" class="px-2.5 py-1 bg-slate-800 hover:bg-indigo-600 text-white rounded font-semibold text-[11px] transition">
+                      ✏️ Modifica
+                    </button>
+                    <button @click="deletePurchase(item)" class="px-2.5 py-1 bg-rose-950/60 hover:bg-rose-700 text-rose-200 rounded font-semibold text-[11px] border border-rose-800 transition">
+                      🗑️ Elimina
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="currentTab === 'statistiche'" class="space-y-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+            <span class="text-xs text-slate-400 block uppercase font-bold">Spesa Totale</span>
+            <span class="text-2xl font-black text-emerald-400">{{ spentTotal }} / {{ config.initialBudget }} cr</span>
+            <span class="text-xs text-slate-500 block mt-1">
+              Utilizzato il {{ ((spentTotal / config.initialBudget) * 100).toFixed(1) }}% del budget
+            </span>
+          </div>
+
+          <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+            <span class="text-xs text-slate-400 block uppercase font-bold">Prezzo Medio Giocatore</span>
+            <span class="text-2xl font-black text-indigo-400">
+              {{ purchasedCount > 0 ? (spentTotal / purchasedCount).toFixed(1) : 0 }} cr
+            </span>
+            <span class="text-xs text-slate-500 block mt-1">Calcolato su {{ purchasedCount }} acquisti</span>
+          </div>
+
+          <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+            <span class="text-xs text-slate-400 block uppercase font-bold">Top Acquisto</span>
+            <span class="text-2xl font-black text-amber-400">
+              {{ topPurchase ? topPurchase.nome + ' (' + topPurchase.prezzo + ' cr)' : 'N/D' }}
+            </span>
+            <span class="text-xs text-slate-500 block mt-1">Giocatore più costoso della rosa</span>
+          </div>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl p-4">
+          <h3 class="text-sm font-bold text-white mb-3 uppercase tracking-wider">Analisi Dettagliata Spesa Per Ruolo</h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-slate-300">
+              <thead class="bg-slate-950 text-slate-400 uppercase font-bold border-b border-slate-800">
+                <tr>
+                  <th class="p-3">Ruolo</th>
+                  <th class="p-3">Acquistati</th>
+                  <th class="p-3">Budget Teorico</th>
+                  <th class="p-3">Effettivo Speso</th>
+                  <th class="p-3">Media / Giocatore</th>
+                  <th class="p-3">Max Spesa</th>
+                  <th class="p-3">Min Spesa</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800/60">
+                <tr v-for="r in ['P', 'D', 'C', 'A']" :key="r">
+                  <td class="p-3 font-bold text-white">{{ roleFullName(r) }}</td>
+                  <td class="p-3">{{ rolePurchasedCount[r] }} / {{ config.roleTargets[r] }}</td>
+                  <td class="p-3">{{ roleTheoreticalBudgets[r] }} cr</td>
+                  <td class="p-3 font-bold text-amber-400">{{ roleSpent[r] }} cr</td>
+                  <td class="p-3">{{ rolePurchasedCount[r] > 0 ? (roleSpent[r] / rolePurchasedCount[r]).toFixed(1) : 0 }} cr</td>
+                  <td class="p-3 font-semibold text-emerald-400">{{ getRoleExtremes(r).max }}</td>
+                  <td class="p-3 font-semibold text-slate-400">{{ getRoleExtremes(r).min }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+            <h4 class="text-xs font-bold text-slate-300 uppercase mb-4">Budget Teorico vs Spesa Effettiva</h4>
+            <div class="h-64">
+              <canvas id="chartBudgetVsSpent"></canvas>
+            </div>
+          </div>
+
+          <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+            <h4 class="text-xs font-bold text-slate-300 uppercase mb-4">Distribuzione Spesa Per Ruolo</h4>
+            <div class="h-64 flex justify-center">
+              <canvas id="chartRoleDistribution"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="currentTab === 'impostazioni'" class="space-y-6">
+        
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6 max-w-3xl mx-auto shadow-xl">
+          <h2 class="text-lg font-bold text-white border-b border-slate-800 pb-3">1. Configurazione Iniziale Asta</h2>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+            <div>
+              <label class="block font-bold text-slate-400 mb-1">Nome Asta / Lega</label>
+              <input v-model="configForm.ligaName" type="text" class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white font-semibold">
+            </div>
+
+            <div>
+              <label class="block font-bold text-slate-400 mb-1">Budget Iniziale Crediti</label>
+              <input v-model.number="configForm.initialBudget" type="number" min="1" class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white font-semibold">
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Composizione Rosa e % Budget Teorico</h3>
+            
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div v-for="r in ['P', 'D', 'C', 'A']" :key="r" class="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+                <span class="font-bold text-white block border-b border-slate-800 pb-1">{{ roleFullName(r) }} ({{ r }})</span>
+                <div>
+                  <label class="block text-[10px] text-slate-400">Numero Giocatori:</label>
+                  <input v-model.number="configForm.roleTargets[r]" type="number" min="1" class="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-center text-white font-bold">
+                </div>
+                <div>
+                  <label class="block text-[10px] text-slate-400">% Budget Desiderato:</label>
+                  <input v-model.number="configForm.rolePercents[r]" type="number" min="0" max="100" class="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-center text-amber-400 font-bold">
+                </div>
+              </div>
+            </div>
+
+            <div class="flex justify-between items-center text-xs p-3 bg-slate-950 rounded-xl border border-slate-800">
+              <span>Totale Giocatori: <strong class="text-indigo-400">{{ configFormTotalPlayers }}</strong></span>
+              <span>Somma Percentuali: 
+                <strong :class="configFormPercentSum === 100 ? 'text-emerald-400' : 'text-rose-400 font-bold'">
+                  {{ configFormPercentSum }}%
+                </strong>
+              </span>
+            </div>
+          </div>
+
+          <button @click="saveConfiguration" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-lg transition">
+            💾 Salva Configurazione Asta
+          </button>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4 max-w-3xl mx-auto shadow-xl">
+          <h2 class="text-lg font-bold text-white border-b border-slate-800 pb-3">2. Importazione Listone Excel (.xlsx / .xls)</h2>
+          
+          <p class="text-xs text-slate-400">
+            Seleziona il file Excel scaricato dalla tua piattaforma di Fantacalcio. Potrai mappare le colonne prima di importare.
+          </p>
+
+          <input type="file" ref="excelFileInput" @change="handleExcelFileUpload" accept=".xlsx, .xls"
+                 class="block w-full text-xs text-slate-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer">
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4 max-w-3xl mx-auto shadow-xl">
+          <h2 class="text-lg font-bold text-white border-b border-slate-800 pb-3">3. Backup & Ripristino Dati</h2>
+
+          <div class="flex flex-col sm:flex-row gap-3">
+            <button @click="exportBackupJSON" class="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl border border-slate-700 text-xs transition">
+              📥 Esporta Backup Asta (JSON)
+            </button>
+
+            <label class="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl border border-slate-700 text-xs text-center cursor-pointer transition">
+              📤 Ripristina da File Backup JSON
+              <input type="file" @change="importBackupJSON" accept=".json" class="hidden">
+            </label>
+          </div>
+
+          <div class="pt-4 border-t border-slate-800">
+            <button @click="confirmResetAll" class="px-4 py-2 bg-rose-950/40 hover:bg-rose-900 text-rose-300 border border-rose-800 text-xs font-bold rounded-xl transition">
+              ⚠️ Azzera e Cancella Tutti i Dati
+            </button>
+          </div>
+        </div>
+
+      </section>
+
+    </main>
+
+    <div v-if="showMappingModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
+        <h3 class="text-base font-bold text-white border-b border-slate-800 pb-2">Mappatura Colonne Excel</h3>
+        <p class="text-xs text-slate-400">Associa le colonne lette dal tuo file Excel ai campi richiesti dall'applicazione:</p>
+
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-bold text-slate-300 mb-1">Nome Calciatore</label>
+            <select v-model="columnMapping.nome" class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white">
+              <option v-for="h in rawExcelHeaders" :key="h" :value="h">{{ h }}</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block font-bold text-slate-300 mb-1">Squadra</label>
+            <select v-model="columnMapping.squadra" class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white">
+              <option v-for="h in rawExcelHeaders" :key="h" :value="h">{{ h }}</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block font-bold text-slate-300 mb-1">Ruolo (P, D, C, A)</label>
+            <select v-model="columnMapping.ruolo" class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white">
+              <option v-for="h in rawExcelHeaders" :key="h" :value="h">{{ h }}</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block font-bold text-slate-300 mb-1">Quotazione Listone</label>
+            <select v-model="columnMapping.quotazione" class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white">
+              <option v-for="h in rawExcelHeaders" :key="h" :value="h">{{ h }}</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button @click="showMappingModal = false" class="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">Annulla</button>
+          <button @click="confirmExcelImport" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow">Conferma & Importa</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="editingPurchase" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
+        <h3 class="text-base font-bold text-white">Modifica Prezzo Acquisto</h3>
+        <p class="text-xs text-slate-400">
+          Modifica il prezzo pagato per <strong class="text-white">{{ editingPurchase.nome }}</strong>. Tutti i calcoli verranno aggiornati automaticamente.
+        </p>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-400 mb-1">Nuovo Prezzo (Crediti)</label>
+          <input v-model.number="editPriceInput" type="number" min="1" class="w-full px-3 py-2 bg-slate-950 border border-indigo-500 rounded-xl text-amber-400 font-black text-center text-xl">
+        </div>
+
+        <div class="flex justify-end gap-2">
+          <button @click="editingPurchase = null" class="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">Annulla</button>
+          <button @click="savePurchaseEdit" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow">Salva Modifica</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const { createApp, ref, computed, watch, onMounted, nextTick } = Vue;
+
+    createApp({
+      setup() {
+        // TABS
+        const tabs = [
+          { id: 'asta', label: 'Asta Live', icon: '⚡' },
+          { id: 'rosa', label: 'Mia Rosa', icon: '📋' },
+          { id: 'giocatori', label: 'Listone', icon: '🔍' },
+          { id: 'storico', label: 'Storico', icon: '📜' },
+          { id: 'statistiche', label: 'Statistiche', icon: '📊' },
+          { id: 'impostazioni', label: 'Impostazioni', icon: '⚙️' },
+        ];
+        const currentTab = ref('asta');
+
+        // STATE
+        const config = ref({
+          ligaName: 'Asta Lega 2026',
+          initialBudget: 500,
+          totalPlayers: 25,
+          roleTargets: { P: 3, D: 8, C: 8, A: 6 },
+          rolePercents: { P: 8, D: 20, C: 30, A: 42 },
+          isConfigured: false
+        });
+
+        const configForm = ref(JSON.parse(JSON.stringify(config.value)));
+        const players = ref([]);
+        const purchases = ref([]);
+
+        // FILTERS & SELECTION
+        const searchQuery = ref('');
+        const selectedRoleFilter = ref('ALL');
+        const selectedTeamFilter = ref('ALL');
+        const availabilityFilter = ref('ALL');
+        const rosaSortOption = ref('price_desc');
+        const selectedPlayer = ref(null);
+        const offerPrice = ref(1);
+
+        // MODALS & EXCEL MAPPING
+        const showMappingModal = ref(false);
+        const rawExcelHeaders = ref([]);
+        const rawExcelRows = ref([]);
+        const columnMapping = ref({ nome: '', squadra: '', ruolo: '', quotazione: '' });
+        const editingPurchase = ref(null);
+        const editPriceInput = ref(1);
+
+        // NOTIFICATIONS
+        const notification = ref({ show: false, message: '', type: 'success' });
+        const showToast = (msg, type = 'success') => {
+          notification.value = { show: true, message: msg, type };
+          setTimeout(() => { notification.value.show = false; }, 3000);
+        };
+
+        // COMPUTED CONFIG & BUDGET
+        const configFormTotalPlayers = computed(() => {
+          const t = configForm.value.roleTargets;
+          return (t.P || 0) + (t.D || 0) + (t.C || 0) + (t.A || 0);
+        });
+
+        const configFormPercentSum = computed(() => {
+          const p = configForm.value.rolePercents;
+          return (p.P || 0) + (p.D || 0) + (p.C || 0) + (p.A || 0);
+        });
+
+        const roleTheoreticalBudgets = computed(() => {
+          const b = config.value.initialBudget;
+          const p = config.value.rolePercents;
+          return {
+            P: Math.round(b * ((p.P || 0) / 100)),
+            D: Math.round(b * ((p.D || 0) / 100)),
+            C: Math.round(b * ((p.C || 0) / 100)),
+            A: Math.round(b * ((p.A || 0) / 100)),
+          };
+        });
+
+        const spentTotal = computed(() => purchases.value.reduce((sum, item) => sum + item.prezzo, 0));
+        const creditsRemaining = computed(() => config.value.initialBudget - spentTotal.value);
+        const purchasedCount = computed(() => purchases.value.length);
+        const remainingCount = computed(() => Math.max(0, config.value.totalPlayers - purchasedCount.value));
+
+        const rolePurchasedCount = computed(() => ({
+          P: purchases.value.filter(x => x.ruolo === 'P').length,
+          D: purchases.value.filter(x => x.ruolo === 'D').length,
+          C: purchases.value.filter(x => x.ruolo === 'C').length,
+          A: purchases.value.filter(x => x.ruolo === 'A').length,
+        }));
+
+        const roleRemainingCount = computed(() => ({
+          P: Math.max(0, config.value.roleTargets.P - rolePurchasedCount.value.P),
+          D: Math.max(0, config.value.roleTargets.D - rolePurchasedCount.value.D),
+          C: Math.max(0, config.value.roleTargets.C - rolePurchasedCount.value.C),
+          A: Math.max(0, config.value.roleTargets.A - rolePurchasedCount.value.A),
+        }));
+
+        const roleSpent = computed(() => ({
+          P: purchases.value.filter(x => x.ruolo === 'P').reduce((s, x) => s + x.prezzo, 0),
+          D: purchases.value.filter(x => x.ruolo === 'D').reduce((s, x) => s + x.prezzo, 0),
+          C: purchases.value.filter(x => x.ruolo === 'C').reduce((s, x) => s + x.prezzo, 0),
+          A: purchases.value.filter(x => x.ruolo === 'A').reduce((s, x) => s + x.prezzo, 0),
+        }));
+
+        const roleTheoreticalRemaining = computed(() => ({
+          P: roleTheoreticalBudgets.value.P - roleSpent.value.P,
+          D: roleTheoreticalBudgets.value.D - roleSpent.value.D,
+          C: roleTheoreticalBudgets.value.C - roleSpent.value.C,
+          A: roleTheoreticalBudgets.value.A - roleSpent.value.A,
+        }));
+
+        // MAX SPENDABLE CALCULATION
+        const maxSpendableNext = computed(() => {
+          const rem = remainingCount.value;
+          if (rem <= 1) return creditsRemaining.value;
+          // Must reserve at least 1 credit for each of the remaining (rem - 1) players
+          return Math.max(1, creditsRemaining.value - (rem - 1));
+        });
+
+        // FILTERED PLAYERS
+        const availableTeams = computed(() => {
+          const teams = new Set(players.value.map(p => p.squadra).filter(Boolean));
+          return Array.from(teams).sort();
+        });
+
+        const filteredPlayers = computed(() => {
+          let list = players.value;
+
+          if (searchQuery.value.trim() !== '') {
+            const q = searchQuery.value.toLowerCase().trim();
+            list = list.filter(p => p.nome.toLowerCase().includes(q) || p.squadra.toLowerCase().includes(q));
+          }
+
+          if (selectedRoleFilter.value !== 'ALL') {
+            list = list.filter(p => p.ruolo === selectedRoleFilter.value);
+          }
+
+          if (selectedTeamFilter.value !== 'ALL') {
+            list = list.filter(p => p.squadra === selectedTeamFilter.value);
+          }
+
+          if (availabilityFilter.value !== 'ALL') {
+            list = list.filter(p => p.stato === availabilityFilter.value);
+          }
+
+          return list;
+        });
+
+        const purchasesSorted = computed(() => {
+          return [...purchases.value].reverse();
+        });
+
+        const canBuySelected = computed(() => {
+          if (!selectedPlayer.value) return false;
+          const r = selectedPlayer.value.ruolo;
+          if (roleRemainingCount.value[r] <= 0) return false;
+          if (offerPrice.value < 1) return false;
+          if (offerPrice.value > maxSpendableNext.value) return false;
+          return true;
+        });
+
+        // HELPERS
+        const roleFullName = (r) => {
+          const map = { P: 'Portieri', D: 'Difensori', C: 'Centrocampisti', A: 'Attaccanti' };
+          return map[r] || r;
+        };
+
+        const roleBadgeBg = (r) => {
+          const map = { P: 'bg-amber-600', D: 'bg-emerald-600', C: 'bg-blue-600', A: 'bg-rose-600' };
+          return map[r] || 'bg-slate-700';
+        };
+
+        const roleCardBorder = (r) => {
+          const map = { P: 'border-amber-500/30', D: 'border-emerald-500/30', C: 'border-blue-500/30', A: 'border-rose-500/30' };
+          return map[r] || 'border-slate-800';
+        };
+
+        const priceIndicator = (quotation, price) => {
+          const ratio = price / (quotation || 1);
+          if (price <= quotation * 1.15) {
+            return { label: '🟢 Prezzo Contenuto', color: 'text-emerald-400' };
+          } else if (price <= quotation * 1.80) {
+            return { label: '🟡 Prezzo In Linea / Elevato', color: 'text-amber-400' };
+          } else {
+            return { label: '🔴 Prezzo Molto Elevato', color: 'text-rose-400' };
+          }
+        };
+
+        const selectPlayer = (p) => {
+          selectedPlayer.value = p;
+          offerPrice.value = Math.max(1, p.quotazione || 1);
+        };
+
+        const adjustPrice = (delta) => {
+          const nextVal = offerPrice.value + delta;
+          if (nextVal >= 1 && nextVal <= maxSpendableNext.value) {
+            offerPrice.value = nextVal;
+          }
+        };
+
+        // BUY PLAYER ACTION
+        const confirmPurchase = () => {
+          if (!canBuySelected.value) return;
+
+          const p = selectedPlayer.value;
+          p.stato = 'ACQUISTATO';
+          p.prezzo = offerPrice.value;
+
+          const purchaseRecord = {
+            id: Date.now() + '_' + p.id,
+            playerId: p.id,
+            nome: p.nome,
+            squadra: p.squadra,
+            ruolo: p.ruolo,
+            quotazione: p.quotazione,
+            prezzo: offerPrice.value,
+            timestamp: new Date().toISOString()
+          };
+
+          purchases.value.push(purchaseRecord);
+          showToast(`Acquistato ${p.nome} per ${offerPrice.value} crediti!`);
+          selectedPlayer.value = null;
+          saveToLocalStorage();
+        };
+
+        // HISTORICAL PURCHASES MANAGEMENT
+        const openEditModal = (item) => {
+          editingPurchase.value = item;
+          editPriceInput.value = item.prezzo;
+        };
+
+        const savePurchaseEdit = () => {
+          if (!editingPurchase.value) return;
+          const diff = editPriceInput.value - editingPurchase.value.prezzo;
+          if (creditsRemaining.value - diff < 0) {
+            showToast('Crediti insufficienti per questa modifica!', 'error');
+            return;
+          }
+
+          editingPurchase.value.prezzo = editPriceInput.value;
+          const p = players.value.find(x => x.id === editingPurchase.value.playerId);
+          if (p) p.prezzo = editPriceInput.value;
+
+          editingPurchase.value = null;
+          showToast('Prezzo aggiornato con successo');
+          saveToLocalStorage();
+        };
+
+        const deletePurchase = (item) => {
+          if (!confirm(`Annullare l'acquisto di ${item.nome}?`)) return;
+
+          purchases.value = purchases.value.filter(x => x.id !== item.id);
+          const p = players.value.find(x => x.id === item.playerId);
+          if (p) {
+            p.stato = 'DISPONIBILE';
+            p.prezzo = null;
+          }
+
+          showToast(`Acquisto di ${item.nome} annullato`);
+          saveToLocalStorage();
+        };
+
+        const getRosaByRole = (role) => {
+          let list = purchases.value.filter(x => x.ruolo === role);
+          if (rosaSortOption.value === 'price_desc') list.sort((a,b) => b.prezzo - a.prezzo);
+          if (rosaSortOption.value === 'price_asc') list.sort((a,b) => a.prezzo - b.prezzo);
+          if (rosaSortOption.value === 'name') list.sort((a,b) => a.nome.localeCompare(b.nome));
+          return list;
+        };
+
+        // CONFIG & EXCEL IMPORT
+        const saveConfiguration = () => {
+          if (configFormPercentSum.value !== 100) {
+            showToast('La somma delle percentuali deve essere esattamente 100%', 'error');
+            return;
+          }
+
+          configForm.value.totalPlayers = configFormTotalPlayers.value;
+          configForm.value.isConfigured = true;
+          config.value = JSON.parse(JSON.stringify(configForm.value));
+          showToast('Configurazione salvata con successo');
+          saveToLocalStorage();
+        };
+
+        const handleExcelFileUpload = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          const reader = new FileReader();
+          reader.onload = (evt) => {
+            const data = new Uint8Array(evt.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheet = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheet];
+            const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+            if (json.length < 2) {
+              showToast('File Excel vuoto o non valido', 'error');
+              return;
+            }
+
+            rawExcelHeaders.value = json[0];
+            rawExcelRows.value = json.slice(1);
+
+            // MAPPATURA FISSA SULLE COLONNE EXCEL (A=0, B=1, C=2, D=3)
+columnMapping.value.ruolo      = rawExcelHeaders.value[0]; // Colonna A: Ruolo
+columnMapping.value.nome       = rawExcelHeaders.value[1]; // Colonna B: Nome
+columnMapping.value.squadra    = rawExcelHeaders.value[2]; // Colonna C: Squadra
+columnMapping.value.quotazione = rawExcelHeaders.value[3]; // Colonna D: Quotazione
+
+            showMappingModal.value = true;
+          };
+          reader.readAsArrayBuffer(file);
+        };
+
+        const confirmExcelImport = () => {
+          const m = columnMapping.value;
+          const idxNome = rawExcelHeaders.value.indexOf(m.nome);
+          const idxSquadra = rawExcelHeaders.value.indexOf(m.squadra);
+          const idxRuolo = rawExcelHeaders.value.indexOf(m.ruolo);
+          const idxQuot = rawExcelHeaders.value.indexOf(m.quotazione);
+
+          const parsed = [];
+          rawExcelRows.value.forEach((row, index) => {
+            if (!row[idxNome]) return;
+
+            let rawRole = String(row[idxRuolo] || '').trim().toUpperCase();
+            let role = 'C';
+            if (rawRole.startsWith('P')) role = 'P';
+            else if (rawRole.startsWith('D')) role = 'D';
+            else if (rawRole.startsWith('C')) role = 'C';
+            else if (rawRole.startsWith('A')) role = 'A';
+
+            parsed.push({
+              id: 'p_' + index + '_' + Date.now(),
+              nome: String(row[idxNome]).trim(),
+              squadra: String(row[idxSquadra] || 'Sconosciuta').trim(),
+              ruolo: role,
+              quotazione: parseInt(row[idxQuot]) || 1,
+              stato: 'DISPONIBILE',
+              prezzo: null
+            });
+          });
+
+          players.value = parsed;
+          purchases.value = [];
+          showMappingModal.value = false;
+          showToast(`Importati con successo ${parsed.length} calciatori!`);
+          saveToLocalStorage();
+        };
+
+        // STATS & EXTREMES
+        const topPurchase = computed(() => {
+          if (purchases.value.length === 0) return null;
+          return [...purchases.value].sort((a,b) => b.prezzo - a.prezzo)[0];
+        });
+
+        const getRoleExtremes = (role) => {
+          const list = purchases.value.filter(x => x.ruolo === role);
+          if (list.length === 0) return { max: '-', min: '-' };
+          const sorted = [...list].sort((a,b) => b.prezzo - a.prezzo);
+          return {
+            max: `${sorted[0].nome} (${sorted[0].prezzo} cr)`,
+            min: `${sorted[sorted.length - 1].nome} (${sorted[sorted.length - 1].prezzo} cr)`
+          };
+        };
+
+        // PERSISTENCE & BACKUP
+        const STORAGE_KEY = 'fanta_auction_app_v2';
+
+        const saveToLocalStorage = () => {
+          const payload = {
+            config: config.value,
+            players: players.value,
+            purchases: purchases.value
+          };
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+        };
+
+        const loadFromLocalStorage = () => {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (raw) {
+            try {
+              const data = JSON.parse(raw);
+              if (data.config) {
+                config.value = data.config;
+                configForm.value = JSON.parse(JSON.stringify(data.config));
+              }
+              if (data.players) players.value = data.players;
+              if (data.purchases) purchases.value = data.purchases;
+            } catch (err) {
+              console.error('Errore durante il caricamento dei dati salvati', err);
+            }
+          }
+        };
+
+        const exportBackupJSON = () => {
+          const payload = { config: config.value, players: players.value, purchases: purchases.value };
+          const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `fantacalcio_asta_backup_${new Date().toISOString().slice(0,10)}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+        };
+
+        const importBackupJSON = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          const reader = new FileReader();
+          reader.onload = (evt) => {
+            try {
+              const data = JSON.parse(evt.target.result);
+              if (data.config && data.players && data.purchases) {
+                config.value = data.config;
+                configForm.value = JSON.parse(JSON.stringify(data.config));
+                players.value = data.players;
+                purchases.value = data.purchases;
+                saveToLocalStorage();
+                showToast('Ripristino dal backup completato!');
+              } else {
+                showToast('File backup non valido', 'error');
+              }
+            } catch (err) {
+              showToast('Errore durante la lettura del backup', 'error');
+            }
+          };
+          reader.readAsText(file);
+        };
+
+        const confirmResetAll = () => {
+          if (confirm('Sei sicuro di voler resettare completamente l\'asta? Tutti i dati verranno persi.')) {
+            localStorage.removeItem(STORAGE_KEY);
+            location.reload();
+          }
+        };
+
+        const formatTime = (isoString) => {
+          if (!isoString) return '';
+          const d = new Date(isoString);
+          return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        };
+
+        // CHARTS RENDERING
+        let chart1 = null;
+        let chart2 = null;
+
+        const renderCharts = () => {
+          nextTick(() => {
+            const ctx1 = document.getElementById('chartBudgetVsSpent');
+            const ctx2 = document.getElementById('chartRoleDistribution');
+
+            if (!ctx1 || !ctx2) return;
+
+            if (chart1) chart1.destroy();
+            if (chart2) chart2.destroy();
+
+            chart1 = new Chart(ctx1, {
+              type: 'bar',
+              data: {
+                labels: ['Portieri', 'Difensori', 'Centrocampisti', 'Attaccanti'],
+                datasets: [
+                  { label: 'Budget Teorico', data: [roleTheoreticalBudgets.value.P, roleTheoreticalBudgets.value.D, roleTheoreticalBudgets.value.C, roleTheoreticalBudgets.value.A], backgroundColor: '#4f46e5' },
+                  { label: 'Spesa Effettiva', data: [roleSpent.value.P, roleSpent.value.D, roleSpent.value.C, roleSpent.value.A], backgroundColor: '#f59e0b' }
+                ]
+              },
+              options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#cbd5e1' } } } }
+            });
+
+            chart2 = new Chart(ctx2, {
+              type: 'doughnut',
+              data: {
+                labels: ['Portieri', 'Difensori', 'Centrocampisti', 'Attaccanti'],
+                datasets: [{
+                  data: [roleSpent.value.P, roleSpent.value.D, roleSpent.value.C, roleSpent.value.A],
+                  backgroundColor: ['#d97706', '#059669', '#2563eb', '#e11d48']
+                }]
+              },
+              options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#cbd5e1' } } } }
+            });
+          });
+        };
+
+        watch(currentTab, (newTab) => {
+          if (newTab === 'statistiche') renderCharts();
+        });
+
+        onMounted(() => {
+          loadFromLocalStorage();
+        });
+
+        return {
+          tabs, currentTab, config, configForm, players, purchases,
+          searchQuery, selectedRoleFilter, selectedTeamFilter, availabilityFilter, rosaSortOption,
+          selectedPlayer, offerPrice, showMappingModal, rawExcelHeaders, columnMapping,
+          editingPurchase, editPriceInput, notification, availableTeams, filteredPlayers, purchasesSorted,
+          configFormTotalPlayers, configFormPercentSum, roleTheoreticalBudgets, spentTotal, creditsRemaining,
+          purchasedCount, remainingCount, rolePurchasedCount, roleRemainingCount, roleSpent, roleTheoreticalRemaining,
+          maxSpendableNext, canBuySelected, topPurchase,
+          roleFullName, roleBadgeBg, roleCardBorder, priceIndicator, selectPlayer, adjustPrice, confirmPurchase,
+          openEditModal, savePurchaseEdit, deletePurchase, getRosaByRole, saveConfiguration, handleExcelFileUpload,
+          confirmExcelImport, getRoleExtremes, exportBackupJSON, importBackupJSON, confirmResetAll, formatTime
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
